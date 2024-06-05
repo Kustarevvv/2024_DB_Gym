@@ -1,0 +1,195 @@
+create table Gym (
+ id_Gym int primary key NOT NULL,  
+ opening_Time time, 
+ closing_Time time,
+ address char(150),
+ phone_number char(20));
+
+create table Clients (
+ id_Client int primary key NOT NULL,
+ surname char(20),
+ first_Name char(20),
+ patronymic char(20),
+ gender char(10) check (gender in ('м', 'ж')),
+ date_Of_birth date,
+ phone_number char(20));
+
+create table Rates(
+id_rate int primary key not null,
+price_per_month int,
+price_per_30_days_of_freezing int,
+start_date date,
+end_date date);
+
+create table GymMembership(
+ id_Membership serial primary key NOT NULL,
+ id_Gym int,
+ id_Client int,
+ id_rate int,
+ duaration int,
+ freezing int,
+ price int,
+ date_of_purchase date,
+ start_date date,
+ active_inactive char(3) check (active_inactive in ('да', 'нет')),
+ constraint f1 foreign key (id_Gym) references Gym(id_Gym),
+ constraint f2 foreign key (id_Client) references Clients(id_Client),
+ constraint f3 foreign key (id_rate) references Rates(id_rate));
+
+
+create table employees(
+id_employee int primary key NOT NULL, 
+id_gym int,
+surname char(20),
+first_Name char(20),
+patronymic char(20),
+date_Of_birth date,
+salaty int,
+position char(20),
+constraint f4 foreign key (id_Gym) references Gym(id_Gym));
+
+create table certificates(
+id_certificate int primary key,
+id_employee int,
+certificate_name char(100),
+constraint f5 foreign key (id_employee) references employees(id_employee));
+
+create table store(
+id_store int primary key NOT NULL,
+id_gym int,
+store_name char(26),
+constraint f6 foreign key (id_Gym) references Gym(id_Gym));
+
+create table products(
+id_product int primary key NOT NULL,
+product_name char(20),
+price int);
+
+create table productstore(
+id_product int NOT NULL,
+id_store int,
+quantity int,
+primary key(id_product, id_store),
+constraint f7 foreign key (id_product) references products(id_product),
+constraint f8 foreign key (id_store) references store(id_store)
+);
+
+create table groups(
+id_group int primary key NOT NULL,
+id_gym int,
+id_employee int,
+training_name char(20),
+constraint f9 foreign key (id_Gym) references Gym(id_Gym),
+constraint f10 foreign key (id_employee) references employees(id_employee),
+constraint f11 foreign key (training_name) references trainings(training_name));
+
+create table groupclient(
+id_group int NOT NULL,
+id_client int,
+primary key(id_group, id_client),
+constraint f12 foreign key (id_group) references groups(id_group),
+constraint f13 foreign key (id_Client) references Clients(id_Client));
+
+create table individualtr(
+id_employee int,
+id_client int,
+id_individualtr int primary key,
+constraint f14 foreign key (id_employee) references employees(id_employee),
+constraint f15 foreign key (id_Client) references Clients(id_Client));
+
+CREATE TABLE TrainerRates (
+id_employee INT PRIMARY KEY,
+price_per_training INT,
+constraint f17 foreign key (id_employee) references employees(id_employee)
+);
+
+
+create table schedule(
+id_training int primary key NOT NULL,
+day_of_week char(20) check (day_of_week in ('Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье')),
+id_group int,
+start_time time,
+constraint f16 foreign key (id_group) references groups(id_group));
+
+create table trainings(
+training_name char(20) primary key not NULL,
+price_per_tr int);
+
+create table scheduletr(
+id int primary key,
+id_individualtr int,
+day_of_week char(20) check (day_of_week in ('Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье')),
+start_time time,
+constraint f18 foreign key (id_individualtr) references individualtr (id_individualtr));
+
+
+Триггер---------------------------------
+
+CREATE OR REPLACE FUNCTION public.calculate_membership_price()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    freeze_price INT;
+    months_price INT;
+BEGIN
+    SELECT price_per_month INTO months_price FROM Rates WHERE id_rate = NEW.id_rate;
+    SELECT price_per_30_days_of_freezing INTO freeze_price FROM Rates WHERE id_rate = NEW.id_rate;
+    
+    freeze_price := freeze_price * NEW.freezing/30;
+    months_price := months_price * NEW.duaration;
+    
+    NEW.price := months_price + freeze_price;
+    
+    RETURN NEW;
+END;
+$function$
+;
+
+Триггер----------------------------
+CREATE OR REPLACE FUNCTION public.check_schedule_conflict()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM schedule
+        WHERE id_group = NEW.id_group
+        AND day_of_week = NEW.day_of_week
+        AND start_time = NEW.start_time
+    ) THEN
+        RAISE EXCEPTION 'Ошибка при попытке вставить новую запись. Наложение занятий.';
+    END IF;
+    RETURN NEW;
+END;
+$function$
+;
+
+
+ABC---------------------------------
+WITH q1 AS (
+    SELECT gm.id_client, SUM(gm.price) AS total_payment
+    FROM GymMembership gm
+    GROUP BY gm.id_client
+),
+
+q2 AS (
+    SELECT q1.id_client, 1.0 * total_payment / (SELECT SUM(price) FROM GymMembership) AS proportion
+    FROM q1
+    ORDER BY proportion DESC
+),
+
+q3 AS (
+    SELECT id_client, proportion, 
+           SUM(proportion) OVER (ORDER BY proportion DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS cum_proportion
+    FROM q2
+)
+
+SELECT id_client, proportion, cum_proportion,
+       CASE
+           WHEN cum_proportion < 0.8 THEN 'A'
+           WHEN cum_proportion > 0.95 THEN 'C'
+           ELSE 'B'
+       END AS ABC
+FROM q3;
